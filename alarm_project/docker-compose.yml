@@ -1,0 +1,19 @@
+services:
+  alarm:
+    build: .
+    container_name: alarm-project
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Asia/Seoul
+    volumes:
+      - /data/mino:/data/mino
+      - /root/.ssh:/root/.ssh:ro
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

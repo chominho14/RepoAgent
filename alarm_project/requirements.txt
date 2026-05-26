@@ -1,0 +1,11 @@
+accelerate>=0.34
+chromadb>=0.5
+sentence-transformers>=3.0
+apscheduler>=3.10
+langgraph>=0.2
+python-telegram-bot>=21.0
+transformers>=4.45
+torch>=2.3
+python-dotenv>=1.0
+pyyaml>=6.0
+gitpython>=3.1

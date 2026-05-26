@@ -1,0 +1,21 @@
+# 환경변수 (토큰/비밀번호)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# 런타임 생성 데이터
+logs/*
+!logs/.gitkeep
+rag_db/
+
+# 내부 문서
+CLAUDE.md
+checklist.md
+context-notes.md

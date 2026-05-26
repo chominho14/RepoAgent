@@ -1,0 +1,20 @@
+gitlab:
+  url: "https://your-gitlab-host"                           # GitLab 서버 주소
+  repo_url: "https://your-gitlab-host/group/repo-name.git" # 업로드할 레포지토리 URL
+  ssl_verify: false                                         # 사설 인증서 사용 시 false
+
+sync:
+  root_path: "/path/to/your/projects"    # 모니터링할 프로젝트 루트 경로
+
+notify:
+  cron: "0 17 * * 1-5"    # 알림 시간 (평일 17:00, cron 형식)
+
+project_descriptions:
+  # 프로젝트 폴더명: 설명 (변경 없을 때 일일 report에 표시)
+  # example-project: "프로젝트 한 줄 설명"
+
+llm:
+  model_id: "Qwen/Qwen2.5-7B-Instruct"    # HuggingFace 모델 ID
+  device: "auto"                            # cuda / cpu / auto
+  max_new_tokens: 512
+  language_blocking_enabled: true           # 한국어 강제 출력 여부
