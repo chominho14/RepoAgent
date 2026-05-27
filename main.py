@@ -81,6 +81,8 @@ def run_notify(settings):
         result = build_sync_service(settings).sync()
         status = "성공" if result.success else f"실패: {result.error}"
         logger.info(f"git sync 완료 — {status}")
+        for c in result.commits:
+            logger.info(f"  [{c['folder']}] {c['file_count']}개 파일 — {c['message']}")
     else:
         logger.info("=== 커밋 건너뜀 (사용자 거부) ===")
 
@@ -93,6 +95,8 @@ def make_sync_job(settings):
         result = git_sync.sync()
         status = "성공" if result.success else f"실패: {result.error}"
         logger.info(f"git sync 완료 — {status}")
+        for c in result.commits:
+            logger.info(f"  [{c['folder']}] {c['file_count']}개 파일 — {c['message']}")
 
     return sync_job
 

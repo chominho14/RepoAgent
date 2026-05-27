@@ -1,10 +1,12 @@
 # LangGraph 기반 일일 요약 파이프라인 (collect→rag_retrieve→analyze→format→send→rag_store)
 import json
 import logging
+import re
 from datetime import date
 from pathlib import Path
 
 _SECRETS_LOG = Path(__file__).parent.parent / "logs" / "gitignored_today.json"
+_FOLDER_SUMMARIES_LOG = Path(__file__).parent.parent / "logs" / "folder_summaries_today.json"
 
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
@@ -56,6 +58,8 @@ def build_summary_graph(
             return {**state, "llm_summary": "", "llm_ok": True}
         try:
             summary = analyzer.summarize(state["diffs"], state["past_contexts"])
+            changed_folders = [d.folder_name for d in state["diffs"] if d.has_changes]
+            _save_folder_summaries(_parse_folder_summaries(summary, changed_folders))
             return {**state, "llm_summary": summary, "llm_ok": True}
         except Exception as e:
             logger.error(f"LLM 분석 실패: {e}")
@@ -139,6 +143,40 @@ def _load_gitignored_warnings() -> list[str]:
     except Exception:
         pass
     return []
+
+
+def _parse_folder_summaries(llm_summary: str, expected_folders: list[str]) -> dict[str, str]:
+    """LLM 요약 텍스트를 폴더별로 분리해 commit 메시지로 재사용한다."""
+    if not llm_summary:
+        return {}
+
+    blocks = re.split(r'\n(?=🔹)', llm_summary)
+    result: dict[str, str] = {}
+    for block in blocks:
+        block = block.strip()
+        if not block.startswith('🔹'):
+            continue
+        lines = block.split('\n', 1)
+        header = lines[0].lstrip('🔹').strip()
+        # 마크다운 강조 제거 (*folder*, **folder**)
+        header = re.sub(r'^\*+|\*+$', '', header).strip()
+        body = lines[1].strip() if len(lines) > 1 else ""
+        if header in expected_folders:
+            result[header] = body
+    return result
+
+
+def _save_folder_summaries(summaries: dict[str, str]) -> None:
+    _FOLDER_SUMMARIES_LOG.parent.mkdir(exist_ok=True)
+    _FOLDER_SUMMARIES_LOG.write_text(
+        json.dumps(
+            {"date": str(date.today()), "summaries": summaries},
+            ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if summaries:
+        logger.info(f"폴더별 요약 저장: {list(summaries.keys())}")
 
 
 def run_summary_pipeline(

@@ -10,6 +10,7 @@ from pathlib import Path
 from services.secret_scanner import scan_sensitive_files
 
 _SECRETS_LOG = Path(__file__).parent.parent / "logs" / "gitignored_today.json"
+_FOLDER_SUMMARIES_LOG = Path(__file__).parent.parent / "logs" / "folder_summaries_today.json"
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class SyncResult:
     committed: bool
     error: str = ""
     gitignored_files: list[dict] = field(default_factory=list)
+    commits: list[dict] = field(default_factory=list)  # 폴더별 커밋 정보
 
 
 class GitSyncService:
@@ -82,9 +84,10 @@ class GitSyncService:
             self._ensure_gitignore()
             gitignored = self._scan_and_protect()
             self._ensure_remote()
-            committed = self._stage_and_commit()
-            self._push()
-            return SyncResult(True, committed, gitignored_files=gitignored)
+            commits = self._stage_and_commit()
+            if commits:
+                self._push()
+            return SyncResult(True, bool(commits), gitignored_files=gitignored, commits=commits)
         except Exception as e:
             logger.error(f"git sync 실패: {e}")
             return SyncResult(False, False, str(e))
@@ -151,28 +154,56 @@ class GitSyncService:
         else:
             self._run(["git", "remote", "set-url", "origin", self._remote_url])
 
-    def _stage_and_commit(self) -> bool:
+    def _stage_and_commit(self) -> list[dict]:
+        """폴더별로 분리해 개별 커밋을 생성한다."""
         self._run(["git", "add", "-A"], timeout=1800)  # 대용량 폴더 대응 30분
-        status = self._run(["git", "status", "--porcelain"], capture=True)
-        if not status.strip():
+        # core.quotepath=false: 한글 등 비ASCII 경로를 이스케이프 없이 UTF-8 그대로 출력
+        all_files = self._run(
+            ["git", "-c", "core.quotepath=false", "diff", "--cached", "--name-only"],
+            capture=True,
+        )
+        if not all_files.strip():
             logger.info("변경사항 없음, 커밋 스킵")
-            return False
-        msg = self._build_commit_message()
-        self._run(["git", "commit", "-m", msg])
-        return True
+            return []
 
-    def _build_commit_message(self) -> str:
-        """스테이지된 파일을 폴더별로 집계해 커밋 메시지 생성."""
-        files = self._run(["git", "diff", "--cached", "--name-only"], capture=True)
-        folders: dict[str, int] = {}
-        for f in files.splitlines():
+        # 최상위 폴더 기준으로 파일 그룹화
+        folders_to_files: dict[str, list[str]] = {}
+        for f in all_files.splitlines():
             top = f.split("/")[0] if "/" in f else "."
-            folders[top] = folders.get(top, 0) + 1
-        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        if not folders:
-            return f"auto: {date_str}"
-        folder_lines = "\n".join(f"  {k}: {v}개 파일" for k, v in sorted(folders.items()))
-        return f"auto: {date_str}\n\n{folder_lines}"
+            folders_to_files.setdefault(top, []).append(f)
+
+        summaries = self._load_folder_summaries()
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        commits: list[dict] = []
+
+        for folder, files in sorted(folders_to_files.items()):
+            msg = self._build_folder_commit_message(folder, summaries.get(folder, ""), date_str, len(files))
+            # pathspec 전달 시 인자 폭주 방지를 위해 청크 분할
+            self._run(["git", "commit", "-m", msg, "--", *files])
+            logger.info(f"커밋 생성: [{folder}] {len(files)}개 파일")
+            commits.append({
+                "folder": folder,
+                "file_count": len(files),
+                "message": msg.split("\n")[0],
+            })
+        return commits
+
+    def _load_folder_summaries(self) -> dict[str, str]:
+        """notify 단계에서 LLM이 생성한 폴더별 요약을 commit 메시지로 재사용한다."""
+        try:
+            data = json.loads(_FOLDER_SUMMARIES_LOG.read_text(encoding="utf-8"))
+            if data.get("date") == str(date.today()):
+                return data.get("summaries", {})
+        except Exception:
+            pass
+        return {}
+
+    def _build_folder_commit_message(
+        self, folder: str, summary: str, date_str: str, file_count: int,
+    ) -> str:
+        header = f"[{folder}] {date_str}" if folder != "." else f"[root] {date_str}"
+        body = summary.strip() if summary.strip() else f"{file_count}개 파일 변경"
+        return f"{header}\n\n{body}"
 
     def _push(self) -> None:
         # 최초 1회: remote에 초기 파일이 있을 경우 pull 후 push

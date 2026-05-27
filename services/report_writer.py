@@ -15,7 +15,9 @@ class ReportWriter:
 
     def write(self, diffs: list[FolderDiff], llm_summary: str, gitignored_warnings: list[str]) -> None:
         today = date.today().strftime("%Y-%m-%d")
-        report_path = self._root / f"{today}_report.txt"
+        reports_dir = self._root / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        report_path = reports_dir / f"{today}_report.txt"
         lines = self._build(diffs, llm_summary, gitignored_warnings, today)
         report_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"리포트 저장: {report_path}")
