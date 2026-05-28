@@ -12,11 +12,12 @@
 
 ## 주요 기능
 
-- **자동 git sync** — 지정한 폴더를 GitLab에 자동 커밋·푸시 (민감 파일 자동 gitignore 처리)
-- **LLM 일일 요약** — 당일 변경된 파일을 폴더별로 분석해 2문장 요약 생성
+- **자동 git sync** — 지정한 폴더를 GitLab에 폴더별로 분리 커밋·푸시 (민감 파일 자동 gitignore 처리)
+- **코드 분석** — Qwen2.5-Coder가 폴더별 `git diff`를 읽어 변경 내용과 의미·영향을 분석
+- **LLM 일일 요약** — 코드 분석 결과를 바탕으로 범용 LLM이 폴더별 2문장 요약 생성
 - **RAG 컨텍스트** — ChromaDB에 과거 변경 이력을 저장해 다음 날 분석에 활용
 - **Telegram 알림** — 요약 결과를 Bot으로 전송, 커밋 여부를 대화로 확인
-- **일일 리포트** — 변경 사항과 수정 없는 프로젝트 목록을 `날짜_report.txt`로 저장
+- **일일 리포트** — 변경 사항과 수정 없는 프로젝트 목록을 `reports/날짜_report.txt`로 저장
 
 ## 버전 히스토리
 
@@ -31,13 +32,15 @@
 ```
 매일 지정 시간
   │
-  ├─ LLM 분석 (Qwen2.5-7B 온디맨드 로딩)
-  ├─ RAG 검색 (ChromaDB)
+  ├─ 변경 수집 (git diff HEAD + 신규 파일, 폴더별)
+  ├─ RAG 검색 (ChromaDB — 과거 유사 변경 패턴)
+  ├─ 코드 분석 (Qwen2.5-Coder, 폴더별 diff → 로드 후 즉시 해제)
+  ├─ 요약 합성 (Qwen2.5-7B, 코드 분석 결과 활용 → 로드 후 즉시 해제)
   ├─ Telegram 요약 전송
-  ├─ 리포트 파일 저장 (날짜_report.txt)
+  ├─ 리포트 저장 (reports/날짜_report.txt)
   ├─ "커밋을 진행할까요?" 질문
   │
-  ├─ "응"  → GitLab push 즉시 실행
+  ├─ "응"  → 폴더별 분리 커밋 후 GitLab push
   ├─ "아니" → 커밋 건너뜀
   └─ 무응답 (자정까지) → 자동 커밋
 ```
@@ -45,7 +48,7 @@
 ## 요구사항
 
 - Python 3.11
-- CUDA GPU (Qwen2.5-7B 기준 약 14GB VRAM)
+- CUDA GPU (Qwen2.5-7B + Qwen2.5-Coder-7B 순차 로딩 기준 약 14GB VRAM)
 - GitLab 계정 및 Personal Access Token
 - Telegram Bot Token ([BotFather](https://t.me/BotFather)에서 생성)
 - HuggingFace Token (gated 모델 사용 시)
@@ -98,7 +101,8 @@ project_descriptions:
   my-project: "프로젝트 한 줄 설명"    # 변경 없을 때 리포트에 표시
 
 llm:
-  model_id: "Qwen/Qwen2.5-7B-Instruct"    # 사용할 HuggingFace 모델
+  model_id: "Qwen/Qwen2.5-7B-Instruct"            # 일일 요약용 모델
+  code_model_id: "Qwen/Qwen2.5-Coder-7B-Instruct" # 코드 분석용 모델
   device: "auto"
   max_new_tokens: 512
   language_blocking_enabled: true
@@ -133,13 +137,13 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-
 ## 기술 스택
 
 | 분류 | 기술 |
 |---|---|
 | 파이프라인 오케스트레이션 | LangGraph (StateGraph) |
-| LLM 추론 | HuggingFace Transformers (AutoModelForCausalLM) |
+| 코드 분석 | Qwen2.5-Coder-7B-Instruct (HuggingFace Transformers) |
+| 일일 요약 | Qwen2.5-7B-Instruct (HuggingFace Transformers) |
 | RAG | ChromaDB + sentence-transformers |
 | 스케줄러 | APScheduler (BlockingScheduler) |
 | Telegram | python-telegram-bot v21+ |
@@ -148,8 +152,8 @@ docker-compose logs -f
 
 ## 주의사항
 
-- LLM은 알림 실행 시에만 로드되고 완료 후 즉시 해제됩니다 (GPU 메모리 절약).
-- 민감 파일(`.env`, `*.key`, `*.pem` 등)이 감지되면 자동으로 `.gitignore`에 추가하고 Telegram으로 알림을 보냅니다.
+- Coder 모델과 요약 모델은 순차적으로 로드·해제됩니다. 두 모델이 동시에 GPU에 올라가지 않아 단일 GPU(14GB VRAM)로도 동작합니다.
+- 민감 파일(`.env`, `*.key`, `*.pem` 등)이 감지되면 자동으로 `.gitignore`에 추가하고 Telegram으로 알림을 보냅니다. 스캔 범위는 git이 관리하는 파일에 한정되므로 `.venv`, `site-packages` 등은 오탐 없이 제외됩니다.
 - `ssl_verify: false`는 사설 SSL 인증서를 사용하는 내부 GitLab 서버용입니다. 공식 인증서라면 `true`로 변경하세요.
 
 ## License
