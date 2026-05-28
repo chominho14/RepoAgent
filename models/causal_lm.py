@@ -17,6 +17,14 @@ def _resolve_attn_implementation() -> str:
         return "sdpa"
 
 
+def free_gpu_memory() -> None:
+    """모델 해제 후 GPU 캐시를 비운다 (순차 로딩 시 메모리 회수)."""
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 class CausalLMModel(BaseModel):
     def __init__(
         self,

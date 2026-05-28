@@ -11,6 +11,7 @@ _FOLDER_SUMMARIES_LOG = Path(__file__).parent.parent / "logs" / "folder_summarie
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
+from services.code_analyzer import CodeAnalyzer
 from services.diff_collector import DiffCollector, FolderDiff
 from services.llm_analyzer import LLMAnalyzer
 from services.rag_store import RAGStore
@@ -24,6 +25,7 @@ class SummaryState(TypedDict):
     root_path: str
     diffs: list[FolderDiff]
     past_contexts: dict[str, str]   # folder_name → 과거 유사 변경 패턴
+    code_analyses: dict[str, str]   # folder_name → Coder 모델 코드 분석 결과
     llm_summary: str
     formatted_message: str
     llm_ok: bool
@@ -33,6 +35,7 @@ class SummaryState(TypedDict):
 
 def build_summary_graph(
     collector: DiffCollector,
+    code_analyzer: CodeAnalyzer,
     analyzer: LLMAnalyzer,
     notifier: TelegramNotifier,
     rag_store: RAGStore,
@@ -53,11 +56,20 @@ def build_summary_graph(
             logger.info(f"RAG 컨텍스트 로드: {list(contexts.keys())}")
         return {**state, "past_contexts": contexts}
 
+    def analyze_code(state: SummaryState) -> SummaryState:
+        """Coder 모델로 폴더별 코드 변경을 분석한다."""
+        analyses = code_analyzer.analyze(state["diffs"])
+        if analyses:
+            logger.info(f"코드 분석 완료: {list(analyses.keys())}")
+        return {**state, "code_analyses": analyses}
+
     def analyze_with_llm(state: SummaryState) -> SummaryState:
         if not any(d.has_changes for d in state["diffs"]):
             return {**state, "llm_summary": "", "llm_ok": True}
         try:
-            summary = analyzer.summarize(state["diffs"], state["past_contexts"])
+            summary = analyzer.summarize(
+                state["diffs"], state["past_contexts"], state["code_analyses"]
+            )
             changed_folders = [d.folder_name for d in state["diffs"] if d.has_changes]
             _save_folder_summaries(_parse_folder_summaries(summary, changed_folders))
             return {**state, "llm_summary": summary, "llm_ok": True}
@@ -117,6 +129,7 @@ def build_summary_graph(
     graph = StateGraph(SummaryState)
     graph.add_node("collect_diffs", collect_diffs)
     graph.add_node("retrieve_rag_context", retrieve_rag_context)
+    graph.add_node("analyze_code", analyze_code)
     graph.add_node("analyze_with_llm", analyze_with_llm)
     graph.add_node("format_message", format_message)
     graph.add_node("send_telegram", send_telegram)
@@ -125,7 +138,8 @@ def build_summary_graph(
 
     graph.set_entry_point("collect_diffs")
     graph.add_edge("collect_diffs", "retrieve_rag_context")
-    graph.add_edge("retrieve_rag_context", "analyze_with_llm")
+    graph.add_edge("retrieve_rag_context", "analyze_code")
+    graph.add_edge("analyze_code", "analyze_with_llm")
     graph.add_edge("analyze_with_llm", "format_message")
     graph.add_edge("format_message", "send_telegram")
     graph.add_edge("send_telegram", "store_rag_summaries")
@@ -182,16 +196,20 @@ def _save_folder_summaries(summaries: dict[str, str]) -> None:
 def run_summary_pipeline(
     root_path: str,
     collector: DiffCollector,
+    code_analyzer: CodeAnalyzer,
     analyzer: LLMAnalyzer,
     notifier: TelegramNotifier,
     rag_store: RAGStore,
     report_writer: ReportWriter,
 ) -> None:
-    compiled = build_summary_graph(collector, analyzer, notifier, rag_store, report_writer)
+    compiled = build_summary_graph(
+        collector, code_analyzer, analyzer, notifier, rag_store, report_writer
+    )
     initial: SummaryState = {
         "root_path": root_path,
         "diffs": [],
         "past_contexts": {},
+        "code_analyses": {},
         "llm_summary": "",
         "formatted_message": "",
         "llm_ok": False,

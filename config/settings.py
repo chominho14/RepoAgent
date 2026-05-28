@@ -13,6 +13,7 @@ load_dotenv(ROOT_DIR / ".env")
 @dataclass
 class LLMConfig:
     model_id: str = "Qwen/Qwen2.5-7B-Instruct"
+    code_model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct"  # 코드 변경 분석용 모델
     device: str = "auto"
     max_new_tokens: int = 512
     language_blocking_enabled: bool = True
@@ -77,6 +78,7 @@ def load_settings() -> Settings:
 
     llm_cfg = LLMConfig(
         model_id=llm_section.get("model_id", "Qwen/Qwen2.5-7B-Instruct"),
+        code_model_id=llm_section.get("code_model_id", "Qwen/Qwen2.5-Coder-7B-Instruct"),
         device=llm_section.get("device", "auto"),
         max_new_tokens=llm_section.get("max_new_tokens", 512),
         language_blocking_enabled=llm_section.get("language_blocking_enabled", True),

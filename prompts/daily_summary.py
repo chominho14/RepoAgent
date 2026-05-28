@@ -19,6 +19,7 @@ SYSTEM_PROMPT = """\
 def build_summary_messages(
     diffs: list[FolderDiff],
     past_contexts: dict[str, str],
+    code_analyses: dict[str, str],
 ) -> list[dict]:
     today = date.today().strftime("%Y-%m-%d")
     lines = [f"오늘({today}) 변경된 폴더들을 폴더별로 2문장씩 요약해주세요.\n"]
@@ -28,8 +29,13 @@ def build_summary_messages(
         if d.folder_name in past_contexts:
             lines.append("[과거 유사 변경 패턴 (참고용)]")
             lines.append(past_contexts[d.folder_name])
-            lines.append("[오늘 변경]")
-        lines.append(d.stat_summary)
+        # 코드 분석 결과(Coder 모델)가 있으면 우선 사용, 없으면 변경 통계로 대체
+        if d.folder_name in code_analyses:
+            lines.append("[코드 변경 분석]")
+            lines.append(code_analyses[d.folder_name])
+        else:
+            lines.append("[변경 통계]")
+            lines.append(d.stat_summary)
         lines.append("")
 
     return [

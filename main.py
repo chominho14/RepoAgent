@@ -1,6 +1,5 @@
 # 스케줄러 진입점 — 평일 17:50 git sync, 18:00 Telegram 알림 자동 실행
 import argparse
-import gc
 import logging
 import os
 import sys
@@ -12,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from config.settings import load_settings
 from graph.summary_graph import run_summary_pipeline
 from models.causal_lm import CausalLMModel
+from services.code_analyzer import CodeAnalyzer
 from services.diff_collector import DiffCollector
 from services.git_sync import GitSyncService
 from services.llm_analyzer import LLMAnalyzer
@@ -46,33 +46,33 @@ def build_sync_service(settings):
     )
 
 
-def run_notify(settings):
-    """LLM을 로딩하고, 분석 후 메모리에서 해제. 이후 커밋 여부를 사용자에게 확인."""
-    import torch
+def _make_model_loader(settings, model_id):
+    """필요 시점에 해당 모델을 로드하는 클로저 반환 (순차 로딩용)."""
+    def load():
+        return CausalLMModel(
+            model_id=model_id,
+            hf_token=settings.hf_token,
+            device=settings.llm.device,
+            do_sample=False,
+            language_blocking_enabled=settings.llm.language_blocking_enabled,
+        )
+    return load
 
-    logger.info("LLM 로딩 중...")
-    model = CausalLMModel(
-        model_id=settings.llm.model_id,
-        hf_token=settings.hf_token,
-        device=settings.llm.device,
-        do_sample=False,
-        language_blocking_enabled=settings.llm.language_blocking_enabled,
-    )
+
+def run_notify(settings):
+    """Coder→범용 LLM을 순차로 로드/해제하며 분석, 이후 커밋 여부를 사용자에게 확인."""
     collector = DiffCollector()
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
-    analyzer = LLMAnalyzer(model)
     rag_store = RAGStore(settings.rag_db_path)
     report_writer = ReportWriter(settings.sync_root_path, settings.project_descriptions)
+    # 분석기가 각자 모델을 로드/해제 → 두 모델이 동시에 GPU에 올라가지 않음
+    code_analyzer = CodeAnalyzer(_make_model_loader(settings, settings.llm.code_model_id))
+    analyzer = LLMAnalyzer(_make_model_loader(settings, settings.llm.model_id))
 
-    try:
-        run_summary_pipeline(settings.sync_root_path, collector, analyzer, notifier, rag_store, report_writer)
-    finally:
-        del analyzer
-        del model
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logger.info("LLM 메모리 해제 완료.")
+    run_summary_pipeline(
+        settings.sync_root_path, collector, code_analyzer, analyzer,
+        notifier, rag_store, report_writer,
+    )
 
     # 커밋 여부 확인 (자정까지 대기, 무응답이면 자동 커밋)
     confirmed = notifier.ask_commit_confirmation(timeout_seconds=_seconds_until_midnight())
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # 즉시 테스트
     python main.py --run-now sync      # git sync만 실행
     python main.py --run-now notify    # Telegram 알림 실행
-    
+
     # 백그라운드 데몬 (평일 17:50 sync, 18:00 notify 자동)
     nohup python main.py > logs/alarm.log 2>&1 &
 

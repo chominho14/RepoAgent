@@ -14,7 +14,8 @@ project_descriptions:
   # example-project: "프로젝트 한 줄 설명"
 
 llm:
-  model_id: "Qwen/Qwen2.5-7B-Instruct"    # HuggingFace 모델 ID
-  device: "auto"                            # cuda / cpu / auto
+  model_id: "Qwen/Qwen2.5-7B-Instruct"             # 일일 요약용 HuggingFace 모델 ID
+  code_model_id: "Qwen/Qwen2.5-Coder-7B-Instruct"  # 코드 변경 분석용 모델 ID
+  device: "auto"                                    # cuda / cpu / auto
   max_new_tokens: 512
-  language_blocking_enabled: true           # 한국어 강제 출력 여부
+  language_blocking_enabled: true                   # 한국어 강제 출력 여부
